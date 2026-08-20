@@ -58,8 +58,22 @@ export function AdminTasksPage() {
                   {task.assignment_status}
                 </span>
               </td>
-              <td>{task.assigned_to ?? "-"}</td>
               <td>
+                {task.assigned_to_name ? (
+                  <Link to={`/admin/users/${task.assigned_to}`}>{task.assigned_to_name}</Link>
+                ) : (
+                  "-"
+                )}
+              </td>
+              <td>
+                <Link to={`/tasks/${task.id}`}>View</Link>
+                {" | "}
+                {task.status !== "done" && (
+                  <>
+                    <Link to={`/admin/tasks/${task.id}/edit`}>Edit</Link>
+                    {" | "}
+                  </>
+                )}
                 <Link to={`/admin/tasks/${task.id}/eligible-users`}>Eligible users</Link>
                 {" | "}
                 <button onClick={() => triggerRecompute(task.id)}>Recompute</button>

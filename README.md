@@ -139,7 +139,8 @@ Recompute is **event-driven and bounded** — never a full-table scan.
 | Trigger | Celery job | Scope |
 |---|---|---|
 | Task created | `evaluate_task_assignment(task_id)` | Single task |
-| Rules edited | `recompute_for_task_rule_change(task_id)` | Single task |
+| Task edited / resubmitted (Admin/Manager) | `recompute_for_task_rule_change(task_id)` | Single task — always queued on Save & Recompute |
+| Rules edited | `recompute_for_task_rule_change(task_id)` | Single task (`rules_version++`) |
 | User profile changed | `recompute_for_user_change(user_id)` | User's todo tasks + matching pending tasks |
 | Manual admin call | Same jobs via `POST /tasks/recompute-eligibility` | Specified task or user |
 | Safety net (every 5 min) | `sweep_pending_tasks()` | All `pending` tasks only |
@@ -166,11 +167,18 @@ Base path: `/api/v1` · Full docs with request/response bodies:
 | POST | `/auth/login` | Public | Returns access + refresh tokens |
 | POST | `/auth/refresh` | Public | Rotates refresh token |
 | GET | `/users/me` | Any | Current user profile |
-| PATCH | `/users/{id}` | Admin | Triggers recompute on eligibility fields |
+| PATCH | `/users/me` | Any | Self profile edit; eligibility fields enqueue recompute |
+| GET | `/users/` | Admin/Manager | List users (cursor-paginated) |
+| GET | `/users/{id}` | Admin/Manager | User detail |
+| GET | `/users/{id}/tasks` | Admin/Manager | Tasks assigned to that user |
+| PATCH | `/users/{id}` | Admin | Edit params; triggers recompute on eligibility fields |
 | POST | `/tasks/` | Admin/Manager | Creates task; enqueues assignment (202) |
-| GET | `/tasks/my-eligible-tasks` | Any | Cached, cursor-paginated |
-| GET | `/tasks/{id}/eligible-users` | Admin/Manager | Cached preview, capped at 20 |
-| PATCH | `/tasks/{id}` | Admin/Manager or assignee | Admin edits all; User advances status only |
+| GET | `/tasks/my-eligible-tasks` | Any | Assigned tasks for current user (cached) |
+| GET | `/tasks/pending` | Any | Unassigned tasks; users see profile-matching ones; includes `can_claim` |
+| POST | `/tasks/{id}/claim` | Any | Self-assign if pending + eligible |
+| GET | `/tasks/{id}` | Assignee / matching pending / Admin/Manager | Task detail |
+| GET | `/tasks/{id}/eligible-users` | Admin/Manager | Preview; marks `is_current_assignee` |
+| PATCH | `/tasks/{id}` | Admin/Manager or assignee | Admin edits details/rules; assignee updates status only; `done` locked |
 | POST | `/tasks/recompute-eligibility` | Admin/Manager | Manual recompute trigger |
 
 ---

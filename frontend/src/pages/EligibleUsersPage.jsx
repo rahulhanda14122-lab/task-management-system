@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 
 export function EligibleUsersPage() {
@@ -27,14 +27,19 @@ export function EligibleUsersPage() {
 
   return (
     <div className="container">
-      <h2>Eligible Users for: {task?.title}</h2>
+      <div className="row-between">
+        <h2>Eligible Users for: {task?.title}</h2>
+        <Link to="/admin/tasks">Back to All Tasks</Link>
+      </div>
       <p className="muted">
-        Assignment status: <strong>{task?.assignment_status}</strong> | Currently assigned to user #
-        {task?.assigned_to ?? "none"}
+        Assignment status: <strong>{task?.assignment_status}</strong> | Currently assigned to{" "}
+        <strong>{task?.assigned_to_name || "none"}</strong>
       </p>
       {users.length === 0 ? (
-        <p>No eligible users currently match this task's rules. It will remain PENDING and is
-          automatically retried whenever a user's profile changes, plus a periodic sweep.</p>
+        <p>
+          No eligible users currently match this task&apos;s rules. It will remain PENDING and is
+          automatically retried whenever a user&apos;s profile changes, plus a periodic sweep.
+        </p>
       ) : (
         <table className="table">
           <thead>
@@ -45,17 +50,31 @@ export function EligibleUsersPage() {
               <th>Experience</th>
               <th>Location</th>
               <th>Active Tasks</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id} className={u.id === task?.assigned_to ? "row-highlight" : ""}>
-                <td>{u.full_name}</td>
+              <tr
+                key={u.id}
+                className={u.is_current_assignee || u.id === task?.assigned_to ? "row-highlight" : ""}
+              >
+                <td>
+                  <Link to={`/admin/users/${u.id}`}>{u.full_name}</Link>
+                  {(u.is_current_assignee || u.id === task?.assigned_to) && (
+                    <span className="badge badge-assigned" style={{ marginLeft: "0.5rem" }}>
+                      Assigned
+                    </span>
+                  )}
+                </td>
                 <td>{u.email}</td>
                 <td>{u.department}</td>
                 <td>{u.experience_years}</td>
                 <td>{u.location}</td>
                 <td>{u.active_task_count}</td>
+                <td>
+                  <Link to={`/admin/users/${u.id}`}>Edit user</Link>
+                </td>
               </tr>
             ))}
           </tbody>

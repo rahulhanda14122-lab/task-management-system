@@ -15,9 +15,12 @@ export function Navbar() {
       <div className="navbar-brand">Task Management System</div>
       <div className="navbar-links">
         <Link to="/tasks">My Tasks</Link>
+        <Link to="/pending">Pending</Link>
+        <Link to="/profile">Profile</Link>
         {(user?.role === "admin" || user?.role === "manager") && (
           <>
             <Link to="/admin/tasks">All Tasks</Link>
+            <Link to="/admin/users">Users</Link>
             <Link to="/admin/tasks/new">Create Task</Link>
           </>
         )}

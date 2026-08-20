@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 
-const STATUS_FLOW = {
-  todo: "in_progress",
-  in_progress: "done",
+const STATUS_ACTIONS = {
+  todo: [{ next: "in_progress", label: "Mark In Progress" }],
+  in_progress: [
+    { next: "todo", label: "Move to Todo" },
+    { next: "done", label: "Mark Done" },
+  ],
 };
 
 const STATUS_LABEL = {
@@ -16,9 +20,11 @@ export function MyTasksPage() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [updatingId, setUpdatingId] = useState(null);
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
       const { data } = await api.get("/tasks/my-eligible-tasks");
       setTasks(data.items);
@@ -33,21 +39,35 @@ export function MyTasksPage() {
     load();
   }, []);
 
-  const advanceStatus = async (task) => {
-    const nextStatus = STATUS_FLOW[task.status];
-    if (!nextStatus) return;
-    await api.patch(`/tasks/${task.id}`, { status: nextStatus });
-    load();
+  const setStatus = async (task, nextStatus) => {
+    setUpdatingId(task.id);
+    setError("");
+    try {
+      const { data } = await api.patch(`/tasks/${task.id}`, { status: nextStatus });
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? data : t)));
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to update status");
+      await load();
+    } finally {
+      setUpdatingId(null);
+    }
   };
 
   if (loading) return <div className="page-center">Loading...</div>;
 
   return (
     <div className="container">
-      <h2>My Eligible / Assigned Tasks</h2>
+      <div className="row-between">
+        <h2>My Assigned Tasks</h2>
+        <Link to="/pending">Browse pending tasks</Link>
+      </div>
       {error && <p className="error">{error}</p>}
       {tasks.length === 0 ? (
-        <p>No tasks assigned to you yet. Tasks are auto-assigned in the background once you match a task's rules.</p>
+        <p>
+          No tasks assigned to you yet. Check{" "}
+          <Link to="/pending">pending tasks</Link> you may be eligible to claim, or wait for
+          automatic assignment.
+        </p>
       ) : (
         <table className="table">
           <thead>
@@ -63,7 +83,9 @@ export function MyTasksPage() {
             {tasks.map((task) => (
               <tr key={task.id}>
                 <td>
-                  <strong>{task.title}</strong>
+                  <Link to={`/tasks/${task.id}`}>
+                    <strong>{task.title}</strong>
+                  </Link>
                   <div className="muted">{task.description}</div>
                 </td>
                 <td>
@@ -72,11 +94,18 @@ export function MyTasksPage() {
                 <td>{task.due_date || "-"}</td>
                 <td>{STATUS_LABEL[task.status]}</td>
                 <td>
-                  {STATUS_FLOW[task.status] && (
-                    <button onClick={() => advanceStatus(task)}>
-                      Mark {STATUS_LABEL[STATUS_FLOW[task.status]]}
-                    </button>
-                  )}
+                  <div className="action-row">
+                    {(STATUS_ACTIONS[task.status] || []).map((action) => (
+                      <button
+                        key={action.next}
+                        className={action.next === "todo" ? "btn-secondary" : undefined}
+                        onClick={() => setStatus(task, action.next)}
+                        disabled={updatingId === task.id}
+                      >
+                        {updatingId === task.id ? "Updating..." : action.label}
+                      </button>
+                    ))}
+                  </div>
                 </td>
               </tr>
             ))}

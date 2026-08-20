@@ -217,7 +217,7 @@ refresh_tokens
 | Cache service | `backend/app/services/cache_service.py` | Cache keys, version invalidation |
 | Celery tasks | `backend/app/workers/celery_tasks.py` | Assignment, recompute, sweep jobs |
 | Frontend API | `frontend/src/api/client.js` | Axios client, token injection, auto-refresh |
-| Frontend pages | `frontend/src/pages/` | Login, my tasks, admin task management |
+| Frontend pages | `frontend/src/pages/` | Login, my tasks, create/edit task, admin task management |
 
 ---
 
@@ -352,7 +352,8 @@ Recompute is **event-driven and bounded** — never a full-table scan over 1M ta
 | Event | Trigger | Celery job | Scope |
 |---|---|---|---|
 | Task created | `POST /tasks/` | `evaluate_task_assignment(task_id)` | Single task |
-| Task rules changed | `PATCH /tasks/{id}` (rules) | `recompute_for_task_rule_change(task_id)` | Single task |
+| Task edited / resubmitted | `PATCH /tasks/{id}` from Admin/Manager UI (**Save & Recompute**) or API | `recompute_for_task_rule_change(task_id)` | Single task — always queued when title/description/priority/due_date/rules are updated |
+| Task rules changed | `PATCH /tasks/{id}` (rules body) | `recompute_for_task_rule_change(task_id)` | Single task; also bumps `rules_version` |
 | User profile changed | `PATCH /users/{id}` (dept/exp/location) | `recompute_for_user_change(user_id)` | User's assigned + matching pending tasks |
 | Manual admin trigger | `POST /tasks/recompute-eligibility` | Same jobs as above | Specified task or user |
 | Periodic safety net | Celery Beat (every 5 min) | `sweep_pending_tasks()` | All `pending` tasks only |
@@ -455,7 +456,7 @@ Celery is the **background job runner**. The API enqueues work; workers execute 
 | Celery task | Queue | Trigger | What it does |
 |---|---|---|---|
 | `evaluate_task_assignment` | `assignment` | Task created | Run rule engine for one task |
-| `recompute_for_task_rule_change` | `assignment` | Rules edited | Re-validate and reassign one task |
+| `recompute_for_task_rule_change` | `assignment` | Rules edited **or** Admin/Manager task resubmit | Re-validate and reassign one task |
 | `recompute_for_user_change` | `assignment` | User profile changed | Forward + reverse bounded recompute |
 | `sweep_pending_tasks` | `sweep` | Celery Beat (5 min) | Retry all pending tasks |
 
@@ -590,6 +591,20 @@ Authorization: Bearer <access_token>
 }
 ```
 
+#### PATCH `/users/me` (Any authenticated user)
+
+Self-service profile update (`full_name`, `department`, `experience_years`, `location`).
+
+**Side effect:** Enqueues `recompute_for_user_change(user_id)` when an eligibility field changes.
+
+#### GET `/users/` (Admin/Manager)
+
+Cursor-paginated list of all users.
+
+#### GET `/users/{id}` / GET `/users/{id}/tasks` (Admin/Manager)
+
+User detail and that user's assigned tasks.
+
 #### PATCH `/users/{id}` (Admin only)
 
 **Request:**
@@ -597,11 +612,12 @@ Authorization: Bearer <access_token>
 {
   "department": "finance",
   "experience_years": 8,
-  "location": "Delhi"
+  "location": "Delhi",
+  "is_active": true
 }
 ```
 
-**Side effect:** Enqueues `recompute_for_user_change(user_id)` on Celery `assignment` queue.
+**Side effect:** Enqueues `recompute_for_user_change(user_id)` on Celery `assignment` queue when eligibility fields change.
 
 ---
 
@@ -636,6 +652,7 @@ Authorization: Bearer <access_token>
   "due_date": "2026-09-30",
   "created_by": 1,
   "assigned_to": null,
+  "assigned_to_name": null,
   "assignment_status": "pending",
   "rules_version": 1,
   "created_at": "2026-08-19T10:00:00Z",
@@ -667,6 +684,7 @@ Authorization: Bearer <access_token>
       "status": "todo",
       "priority": "high",
       "assigned_to": 3,
+      "assigned_to_name": "Demo User 1",
       "assignment_status": "assigned",
       "rule": {
         "department": "finance",
@@ -682,6 +700,23 @@ Authorization: Bearer <access_token>
 
 ---
 
+#### GET `/tasks/pending` (Any authenticated user)
+
+Lists unassigned (`assignment_status = pending`) tasks.
+
+- Admin/Manager: all pending tasks
+- User: only tasks whose department / experience / location rules match their profile
+
+Each item includes `can_claim` (true when the viewer fully matches rules including `max_active_tasks`).
+
+#### POST `/tasks/{id}/claim` (Any authenticated user)
+
+Self-assigns a pending task if the caller is eligible. Returns `409` if already assigned; `403` if not eligible.
+
+#### GET `/tasks/{id}` (Assignee, matching pending viewer, or Admin/Manager)
+
+Task detail including rules and `assigned_to_name`.
+
 #### GET `/tasks/{id}/eligible-users` (Admin/Manager)
 
 **Response (200):**
@@ -695,7 +730,8 @@ Authorization: Bearer <access_token>
     "experience_years": 7,
     "location": "Delhi",
     "active_task_count": 0,
-    "last_assigned_at": null
+    "last_assigned_at": null,
+    "is_current_assignee": true
   },
   {
     "id": 13,
@@ -705,7 +741,8 @@ Authorization: Bearer <access_token>
     "experience_years": 15,
     "location": "Hyderabad",
     "active_task_count": 0,
-    "last_assigned_at": "2026-08-18T14:00:00Z"
+    "last_assigned_at": "2026-08-18T14:00:00Z",
+    "is_current_assignee": false
   }
 ]
 ```
@@ -714,16 +751,31 @@ Authorization: Bearer <access_token>
 
 #### PATCH `/tasks/{id}`
 
-**Admin/Manager — update rules:**
+Used by the Admin/Manager **Edit Task** screen (`/admin/tasks/{id}/edit`) and by assignees for status advances.
+
+**Admin/Manager — full edit / resubmit (Save & Recompute):**
 ```json
 {
+  "title": "Reconcile Q3 finance ledger (updated)",
+  "description": "Cross-check Q3 transactions",
+  "priority": "high",
+  "due_date": "2026-09-30",
   "rules": {
     "department": "finance",
     "min_experience_years": 4,
-    "max_active_tasks": 0
+    "location": null,
+    "max_active_tasks": 5
   }
 }
 ```
+
+**Response (200):** Updated `TaskOut` (same shape as create). When rules are included, `rules_version` increments.
+
+**Side effects (Admin/Manager resubmit):**
+- Always enqueues `recompute_for_task_rule_change(task_id)` when title, description, priority, due_date, and/or rules are updated
+- Rule body present → `rules_version++` (eligible-users cache self-invalidates)
+- In-progress tasks stay locked to the current assignee; recompute still runs but will not reassign them
+- **Done tasks cannot be edited** — `PATCH` returns `409 Conflict` with `"Completed tasks cannot be edited"`
 
 **User — advance status only:**
 ```json
@@ -732,11 +784,20 @@ Authorization: Bearer <access_token>
 }
 ```
 
-**Side effects:**
-- Rule change → `rules_version++`, enqueue `recompute_for_task_rule_change`
+**Side effects (status):**
 - Status → `done` → decrement assignee's `active_task_count`, bump cache version
+- Status-only updates by Users do **not** enqueue assignment recompute
 
----
+### Frontend: Edit Task
+
+| Item | Detail |
+|---|---|
+| Route | `/admin/tasks/:taskId/edit` |
+| Access | Admin, Manager |
+| Entry point | **All Tasks** table → **Edit** link (hidden for `done` tasks) |
+| Submit button | **Save & Recompute** |
+| Behavior | Loads current task + rules, `PATCH`s updates, shows success, returns to All Tasks |
+| Completed tasks | **Not editable** — API returns `409 Conflict`; Edit link is hidden; direct URL opens read-only view |
 
 #### POST `/tasks/recompute-eligibility` (Admin/Manager)
 

@@ -192,7 +192,7 @@ Task creation is deliberately asynchronous end-to-end: the API returns `202 Acce
 
 Recompute is **event-driven and scoped**, never a full 1M-row recompute, which is what keeps it viable at scale:
 
-- **Rule changed on a task (Story 4)**: enqueue `evaluate_task_assignment(task_id)` for that single task. This is the same code path as initial assignment — cheap and index-driven since it only touches one task.
+- **Rule changed / task resubmitted (Story 4)**: enqueue `recompute_for_task_rule_change(task_id)` for that single task (Admin/Manager edit via UI or API). Same assignment code path — cheap and index-driven since it only touches one task.
 - **User attribute changed (Story 3)**: enqueue `recompute_for_user_change(user_id)`, which performs two bounded lookups instead of touching all tasks:
   1. **Forward check** — if the user is currently `assigned_to` some `assigned` tasks whose rules they no longer satisfy (e.g. they moved departments), those tasks are flipped back to `pending` and re-queued for assignment.
   2. **Reverse check** — using the partial index on `tasks.assignment_status = 'pending'` joined to `task_rules` by primary key, find pending tasks whose rules now match the user's new attributes, and attempt assignment for each. Since `pending` tasks are a small subset of the total, this lookup stays fast regardless of overall task volume.
@@ -222,7 +222,7 @@ Cache-aside pattern throughout, backed by Redis:
 | `GET /my-eligible-tasks` | Cursor-paginated, cache-first (`my_tasks:{user_id}:{cursor}`), backed by `tasks(assigned_to, status)`. |
 | `POST /tasks/recompute-eligibility` | Accepts `task_id` or `user_id`; enqueues the same underlying Celery tasks used by the automatic triggers, so it's a manual/idempotent re-run rather than a separate code path. |
 | `PATCH /users/{id}` *(supporting)* | Profile update (department/experience/location) → triggers `recompute_for_user_change` on commit. |
-| `PATCH /tasks/{id}` *(supporting)* | Status transitions (`todo → in_progress → done`) and rule edits → status change adjusts `active_task_count`; rule edits trigger `evaluate_task_assignment`. |
+| `PATCH /tasks/{id}` *(supporting)* | Admin/Manager **Edit / resubmit** updates title/description/priority/due_date/rules and always enqueues `recompute_for_task_rule_change` (**done tasks are rejected with 409**); User may only advance status (`todo → in_progress → done`). Status → `done` adjusts `active_task_count`. |
 
 ---
 

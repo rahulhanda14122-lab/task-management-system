@@ -44,11 +44,21 @@ class TaskOut(BaseModel):
     due_date: date | None
     created_by: int
     assigned_to: int | None
+    assigned_to_name: str | None = None
     assignment_status: AssignmentStatus
     rules_version: int
     created_at: datetime
     updated_at: datetime
     rule: TaskRuleOut | None = None
+
+
+def serialize_task(task) -> TaskOut:
+    """Map ORM Task → TaskOut, including assignee display name when loaded."""
+    out = TaskOut.model_validate(task)
+    assignee = getattr(task, "assignee", None)
+    if assignee is not None:
+        out = out.model_copy(update={"assigned_to_name": assignee.full_name})
+    return out
 
 
 class EligibleUserOut(BaseModel):
@@ -62,6 +72,13 @@ class EligibleUserOut(BaseModel):
     location: str
     active_task_count: int
     last_assigned_at: datetime | None = None
+    is_current_assignee: bool = False
+
+
+class PendingTaskOut(TaskOut):
+    """Pending task plus whether the current viewer may claim it."""
+
+    can_claim: bool = False
 
 
 class RecomputeRequest(BaseModel):
@@ -71,4 +88,9 @@ class RecomputeRequest(BaseModel):
 
 class PaginatedTasks(BaseModel):
     items: list[TaskOut]
+    next_cursor: int | None = None
+
+
+class PaginatedPendingTasks(BaseModel):
+    items: list[PendingTaskOut]
     next_cursor: int | None = None

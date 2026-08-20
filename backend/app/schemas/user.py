@@ -29,3 +29,17 @@ class UserUpdateRequest(BaseModel):
     experience_years: int | None = Field(default=None, ge=0, le=60)
     location: str | None = None
     is_active: bool | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Self-service profile update — eligibility fields trigger recompute; role/is_active not allowed."""
+
+    full_name: str | None = None
+    department: Department | None = None
+    experience_years: int | None = Field(default=None, ge=0, le=60)
+    location: str | None = None
+
+
+class PaginatedUsers(BaseModel):
+    items: list[UserOut]
+    next_cursor: int | None = None
